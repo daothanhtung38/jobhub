@@ -1,0 +1,45 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: jobhub-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: jobhub_db
+      POSTGRES_USER: jobhub_user
+      POSTGRES_PASSWORD: jobhub_password
+      TZ: Asia/Ho_Chi_Minh
+
+    ports:
+      - "5434:5432"
+
+    volumes:
+      - jobhub_postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jobhub_user -d jobhub_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  redis:
+    image: redis:7-alpine
+    container_name: jobhub-redis
+    restart: unless-stopped
+
+    ports:
+      - "6379:6379"
+
+    volumes:
+      - jobhub_redis_data:/data
+
+    command: redis-server --appendonly yes
+
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  jobhub_postgres_data:
+  jobhub_redis_data:
