@@ -8,7 +8,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.Set;
 import java.util.UUID;
 
@@ -29,7 +29,15 @@ public class UserResponse {
 
     private UserStatus status;
     private Set<String> roles;
-    private LocalDateTime createdAt;
+
+    @JsonProperty("last_login_at")
+    private Instant lastLoginAt;
+
+    @JsonProperty("created_at")
+    private Instant createdAt;
+
+    @JsonProperty("updated_at")
+    private Instant updatedAt;
 
     // Getter tương thích ngược cho isEmailVerified
     @JsonProperty("is_email_verified")

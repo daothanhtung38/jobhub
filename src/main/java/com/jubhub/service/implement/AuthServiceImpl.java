@@ -1,6 +1,7 @@
 package com.jubhub.service.implement;
 
 import com.jubhub.exception.DuplicateResourceException;
+import com.jubhub.mapper.UserMapper;
 import com.jubhub.model.dto.request.LoginRequest;
 import com.jubhub.model.dto.request.RefreshTokenRequest;
 import com.jubhub.model.dto.request.RegisterRequest;
@@ -24,11 +25,13 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
 import java.util.Collections;
+import java.util.HexFormat;
 import java.util.HashSet;
-import java.util.Set;
-import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -40,6 +43,7 @@ public class AuthServiceImpl implements AuthService {
     private final RefreshTokenRepository refreshTokenRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
+    private final UserMapper userMapper;
 
     @Override
     @Transactional
@@ -62,15 +66,12 @@ public class AuthServiceImpl implements AuthService {
 
         String encodedPassword = passwordEncoder.encode(registerRequest.getPassword());
 
-        User user = User.builder()
-                .email(email)
-                .passwordHash(encodedPassword)
-                .fullName(registerRequest.getFullName().trim())
-                .phone(registerRequest.getPhone() != null ? registerRequest.getPhone().trim() : null)
-                .status(UserStatus.ACTIVE)
-                .emailVerified(false)
-                .roles(new HashSet<>(Collections.singletonList(role)))
-                .build();
+        User user = userMapper.toUser(registerRequest);
+        user.setEmail(email);
+        user.setPasswordHash(encodedPassword);
+        user.setStatus(UserStatus.ACTIVE);
+        user.setEmailVerified(false);
+        user.setRoles(new HashSet<>(Collections.singletonList(role)));
 
         User savedUser = userRepository.save(user);
 
@@ -89,9 +90,19 @@ public class AuthServiceImpl implements AuthService {
             throw new BadCredentialsException("Email hoặc mật khẩu không chính xác");
         }
 
-        if (user.getStatus() == UserStatus.LOCKED) {
-            throw new IllegalArgumentException("Tài khoản của bạn đã bị khóa");
+        if (user.getStatus() == UserStatus.SUSPENDED) {
+            throw new IllegalArgumentException("Tài khoản của bạn đã bị tạm khóa (SUSPENDED)");
         }
+        if (user.getStatus() == UserStatus.DELETED) {
+            throw new IllegalArgumentException("Tài khoản của bạn đã bị xóa (DELETED)");
+        }
+        if (user.getStatus() == UserStatus.INACTIVE) {
+            throw new IllegalArgumentException("Tài khoản chưa được kích hoạt (INACTIVE)");
+        }
+
+        // Cập nhật last_login_at
+        user.setLastLoginAt(Instant.now());
+        userRepository.save(user);
 
         return createAuthResponse(user);
     }
@@ -100,29 +111,41 @@ public class AuthServiceImpl implements AuthService {
     @Override
     @Transactional
     public AuthResponse refreshToken(RefreshTokenRequest request) {
-        RefreshToken oldToken = refreshTokenRepository.findByToken(request.getRefreshToken())
+        String tokenHash = hashToken(request.getRefreshToken());
+
+        RefreshToken oldToken = refreshTokenRepository.findByTokenHash(tokenHash)
                 .orElseThrow(() -> new DuplicateResourceException(
                         "Refresh token không hợp lệ", HttpStatus.UNAUTHORIZED
                 ));
-        if (oldToken.getExpiresAt().isBefore(LocalDateTime.now())) {
+
+        if (oldToken.getRevokedAt() != null) {
+            throw new DuplicateResourceException("Refresh token đã bị thu hồi", HttpStatus.UNAUTHORIZED);
+        }
+
+        if (oldToken.getExpiresAt().isBefore(Instant.now())) {
             refreshTokenRepository.delete(oldToken);
-            throw new DuplicateResourceException("RefreshToken hết hạn", HttpStatus.UNAUTHORIZED);
+            throw new DuplicateResourceException("Refresh token đã hết hạn", HttpStatus.UNAUTHORIZED);
         }
 
         User user = oldToken.getUser();
 
-        refreshTokenRepository.deleteByToken(oldToken.getToken());
+        // Thu hồi token cũ (Token Rotation)
+        oldToken.setRevokedAt(Instant.now());
+        refreshTokenRepository.save(oldToken);
 
         return createAuthResponse(user);
     }
 
     @Override
+    @Transactional
     public void logout(String refreshToken) {
-        RefreshToken token = refreshTokenRepository.findByToken(refreshToken)
+        String tokenHash = hashToken(refreshToken);
+        RefreshToken token = refreshTokenRepository.findByTokenHash(tokenHash)
                 .orElseThrow(() -> new DuplicateResourceException(
-                        "Không tìm thấy refresh token ", HttpStatus.NOT_FOUND));
+                        "Không tìm thấy refresh token", HttpStatus.NOT_FOUND));
 
-        refreshTokenRepository.delete(token);
+        token.setRevokedAt(Instant.now());
+        refreshTokenRepository.save(token);
     }
 
     private RoleType resolveRole(String roleInput) {
@@ -159,42 +182,42 @@ public class AuthServiceImpl implements AuthService {
         String accessToken = jwtService.generateAccessToken(user);
         String refreshToken = jwtService.generateRefreshToken(user);
 
-        // Lưu refresh token vào bảng refresh_tokens
+        // Lưu refresh token (dạng hash) vào bảng refresh_tokens
         saveRefreshToken(user, refreshToken);
 
-        Set<String> roleNames = user.getRoles() != null
-                ? user.getRoles().stream().map(r -> r.getName().name()).collect(Collectors.toSet())
-                : Collections.emptySet();
+        UserResponse userResponse = userMapper.toUserResponse(user);
 
-        UserResponse userResponse = UserResponse.builder()
-                .id(user.getId())
-                .email(user.getEmail())
-                .fullName(user.getFullName())
-                .phone(user.getPhone())
-                .avatarUrl(user.getAvatarUrl())
-                .status(user.getStatus())
-                .emailVerified(user.getEmailVerified())
-                .roles(roleNames)
-                .createdAt(user.getCreatedAt())
-                .build();
-
-        return AuthResponse.builder()
-                .accessToken(accessToken)
-                .refreshToken(refreshToken)
-                .tokenType("Bearer")
-                .expiresIn(jwtService.getAccessTokenExpiration() / 1000)
-                .user(userResponse)
-                .build();
+        return userMapper.toAuthResponse(
+                accessToken,
+                refreshToken,
+                jwtService.getAccessTokenExpiration() / 1000,
+                userResponse
+        );
     }
 
-    private void saveRefreshToken(User user, String token) {
+    private void saveRefreshToken(User user, String rawToken) {
+        String tokenHash = hashToken(rawToken);
+
         RefreshToken refreshTokenEntity = RefreshToken.builder()
                 .user(user)
-                .token(token)
-                .expiresAt(LocalDateTime.now().plusSeconds(jwtService.getRefreshTokenExpiration() / 1000))
-                .revoked(false)
+                .tokenHash(tokenHash)
+                .expiresAt(Instant.now().plusMillis(jwtService.getRefreshTokenExpiration()))
+                .revokedAt(null)
                 .build();
 
         refreshTokenRepository.save(refreshTokenEntity);
+    }
+
+    private String hashToken(String token) {
+        if (token == null || token.isBlank()) {
+            throw new IllegalArgumentException("Token không được để trống");
+        }
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] encodedHash = digest.digest(token.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(encodedHash);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("Thuật toán SHA-256 không khả dụng trên hệ thống", e);
+        }
     }
 }
