@@ -14,7 +14,7 @@ import java.time.LocalDate;
 @Setter
 @AllArgsConstructor
 @NoArgsConstructor
-public class ExperiencesRequest {
+public class CandidateExperiencesRequest {
     @NotBlank(message = "Tên công ty không được để trống")
     @Size(max = 255, message = "Tên công ty không được vượt quá 255 ký tự")
     private String companyName;
