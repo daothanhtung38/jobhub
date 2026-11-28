@@ -67,8 +67,8 @@ public class CandidateExperiencesController {
     }
 
     // Xóa kinh nhiệm
-    @Operation(summary = "Cập nhật kinh nhiệm", description = "Cập nhật kinh nhiệm của ứng viên đăng nhập")
-    @PutMapping("/{id}")
+    @Operation(summary = "Xóa kinh nhiệm", description = "Xóa kinh nhiệm của ứng viên đăng nhập")
+    @DeleteMapping("/{id}")
     public ResponseEntity<ApiResponse<Void>> deleteExperiences(
             @PathVariable("id") UUID id,
             @AuthenticationPrincipal CustomUserDetails userDetails) {

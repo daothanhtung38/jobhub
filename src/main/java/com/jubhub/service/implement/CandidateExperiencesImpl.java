@@ -171,8 +171,8 @@ public class CandidateExperiencesImpl implements CandidateExperiencesService {
             );
         }
 
-        if (endDate == null && endDate.isBefore(startDate)) {
-            throw new IllegalArgumentException("Ngày kết thúc không được để trống và không được trước ngày bắt đầu");
+        if (endDate != null && endDate.isBefore(startDate)) {
+            throw new IllegalArgumentException("Ngày kết thúc không được trước ngày bắt đầu");
         }
 
         if (isCurrent && endDate != null) {

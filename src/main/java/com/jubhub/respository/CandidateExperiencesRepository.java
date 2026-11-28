@@ -8,7 +8,6 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface CandidateExperiencesRepository extends JpaRepository<CandidateExperience, UUID> {
-    Optional<CandidateExperience> findByUserId(UUID userId);
     List<CandidateExperience> findByCandidateId(UUID candidateId);
     Optional<CandidateExperience> findByIdAndCandidateId(UUID id, UUID candidateId);
 }
